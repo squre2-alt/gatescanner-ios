@@ -99,9 +99,8 @@ final class MainViewController: UIViewController {
             wifiLabel.text = ip
             subnetLabel.text = "正在请求本地网络权限..."
 
-            // NWBrowser for Bonjour is the ONLY reliable way to trigger
-            // Local Network permission on iOS 16. Requires NSBonjourServices in Info.plist.
-            triggerWithBonjour()
+            // Dual trigger: Bonjour + direct TCP to real gateway
+            triggerWithBonjour(info: info)
         } else {
             wifiLabel.text = "未检测到 WiFi"
             subnetLabel.text = "请连接 WiFi 后重试\n如已连接: 设置 → 隐私 → 本地网络 → 开启道闸扫描"
@@ -110,36 +109,34 @@ final class MainViewController: UIViewController {
         }
     }
 
-    private func triggerWithBonjour() {
-        // Method 1: Bonjour browser (requires NSBonjourServices in Info.plist)
+    private func triggerWithBonjour(info: WiFiInfo) {
+        var triggered = false
+        let resolve = { [weak self] in
+            guard !triggered else { return }
+            triggered = true
+            self?.permBrowser?.cancel()
+            self?.permBrowser = nil
+            DispatchQueue.main.async { self?.refreshWiFi() }
+        }
+
+        // Method 1: Bonjour browser
         let browser = NWBrowser(
             for: .bonjour(type: "_http._tcp", domain: "local"),
             using: NWParameters()
         )
         permBrowser = browser
-
-        var triggered = false
-        let resolve = { [weak self] in
-            guard !triggered else { return }
-            triggered = true
-            browser.cancel()
-            self?.permBrowser = nil
-            DispatchQueue.main.async { self?.refreshWiFi() }
-        }
-
         browser.stateUpdateHandler = { state in
             switch state {
-            case .ready: resolve()
-            case .failed, .cancelled: resolve()
+            case .ready, .failed, .cancelled: resolve()
             default: break
             }
         }
         browser.start(queue: .main)
 
-        // Method 2: Direct TCP to common LAN IPs (triggers permission differently)
-        let testIPs = ["192.168.1.1", "192.168.1.254", "192.168.0.1", "10.0.0.1"]
-        for ip in testIPs {
-            let conn = NWConnection(host: NWEndpoint.Host(ip), port: NWEndpoint.Port(rawValue: 80)!, using: .tcp)
+        // Method 2: Direct TCP to the real gateway + common router IPs
+        let gateways = [info.gateway, "192.168.1.1", "192.168.0.1", "10.0.0.1"].compactMap { $0 }
+        for gw in gateways.prefix(3) {
+            let conn = NWConnection(host: NWEndpoint.Host(gw), port: NWEndpoint.Port(rawValue: 80)!, using: .tcp)
             conn.stateUpdateHandler = { state in
                 switch state {
                 case .ready: conn.cancel(); resolve()
@@ -153,9 +150,9 @@ final class MainViewController: UIViewController {
 
         // Fallback
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.permBrowser?.cancel()
+            self?.permBrowser = nil
             if self?.subnetLabel.text == "正在请求本地网络权限..." {
-                self?.permBrowser?.cancel()
-                self?.permBrowser = nil
                 self?.refreshWiFi()
             }
         }

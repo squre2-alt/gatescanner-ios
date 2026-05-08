@@ -45,6 +45,16 @@ struct WiFiInfo {
     let subnetMask: String?
     let gateway: String?
 
+    var gateway: String? {
+        guard let (net, _) = networkRange else { return nil }
+        let gw = net + 1 // gateway is usually the first host in subnet
+        let a = UInt8((gw >> 24) & 0xFF)
+        let b = UInt8((gw >> 16) & 0xFF)
+        let c = UInt8((gw >> 8) & 0xFF)
+        let d = UInt8(gw & 0xFF)
+        return "\(a).\(b).\(c).\(d)"
+    }
+
     var networkRange: (UInt32, UInt32)? {
         guard let ip = localIP, let mask = subnetMask else { return nil }
         let ipParts = ip.split(separator: ".").compactMap { UInt8($0) }
