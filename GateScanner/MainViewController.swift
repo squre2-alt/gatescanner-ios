@@ -136,7 +136,7 @@ final class MainViewController: UIViewController {
             }
             conn.start(queue: .global())
             // Cancel after 2s
-            DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak self] in
                 conn.cancel()
                 tried += 1
                 if tried >= 5 && !gotResponse {
