@@ -1,0 +1,20 @@
+name: GateScanner
+options:
+  bundleIdPrefix: com.gatescanner
+  deploymentTarget:
+    iOS: "15.0"
+
+targets:
+  GateScanner:
+    type: application
+    platform: iOS
+    sources:
+      - path: GateScanner
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gatescanner.app
+        INFOPLIST_FILE: GateScanner/Info.plist
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
