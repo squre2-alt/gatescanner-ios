@@ -111,38 +111,47 @@ final class MainViewController: UIViewController {
     }
 
     private func triggerWithBonjour() {
-        // Bonjour browser for HTTP services - requires NSBonjourServices: [_http._tcp] in Info.plist
+        // Method 1: Bonjour browser (requires NSBonjourServices in Info.plist)
         let browser = NWBrowser(
             for: .bonjour(type: "_http._tcp", domain: "local"),
             using: NWParameters()
         )
         permBrowser = browser
 
-        browser.stateUpdateHandler = { [weak self] state in
+        var triggered = false
+        let resolve = { [weak self] in
+            guard !triggered else { return }
+            triggered = true
+            browser.cancel()
+            self?.permBrowser = nil
+            DispatchQueue.main.async { self?.refreshWiFi() }
+        }
+
+        browser.stateUpdateHandler = { state in
             switch state {
-            case .ready:
-                // Browser started successfully - permission was granted (or already granted)
-                browser.cancel()
-                self?.permBrowser = nil
-                DispatchQueue.main.async { self?.refreshWiFi() }
-            case .failed(let error):
-                browser.cancel()
-                self?.permBrowser = nil
-                // If error is permission denied, user declined or hasn't been prompted yet
-                // The prompt should appear when browser starts
-                if (error as NSError).code == 1 { // kDNSServiceErr_Unknown or permission
-                    DispatchQueue.main.async { self?.refreshWiFi() }
-                }
-                DispatchQueue.main.async { self?.refreshWiFi() }
-            case .cancelled:
-                self?.permBrowser = nil
-                DispatchQueue.main.async { self?.refreshWiFi() }
+            case .ready: resolve()
+            case .failed, .cancelled: resolve()
             default: break
             }
         }
         browser.start(queue: .main)
 
-        // Fallback: if browser doesn't respond within 5s, refresh anyway
+        // Method 2: Direct TCP to common LAN IPs (triggers permission differently)
+        let testIPs = ["192.168.1.1", "192.168.1.254", "192.168.0.1", "10.0.0.1"]
+        for ip in testIPs {
+            let conn = NWConnection(host: NWEndpoint.Host(ip), port: NWEndpoint.Port(rawValue: 80)!, using: .tcp)
+            conn.stateUpdateHandler = { state in
+                switch state {
+                case .ready: conn.cancel(); resolve()
+                case .failed, .cancelled: break
+                default: break
+                }
+            }
+            conn.start(queue: .global())
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { conn.cancel() }
+        }
+
+        // Fallback
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
             if self?.subnetLabel.text == "正在请求本地网络权限..." {
                 self?.permBrowser?.cancel()
