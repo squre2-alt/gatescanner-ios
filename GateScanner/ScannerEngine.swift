@@ -168,7 +168,7 @@ final class ScannerEngine {
     static func getWiFiInfo() -> WiFiInfo {
         var localIP: String? = nil, subnetMask: String? = nil
         var ifaddr: UnsafeMutablePointer<ifaddrs>? = nil
-        guard getifaddrs(&ifaddr) == 0 else { return WiFiInfo(ssid: nil, localIP: nil, subnetMask: nil, gateway: nil) }
+        guard getifaddrs(&ifaddr) == 0 else { return WiFiInfo(ssid: nil, localIP: nil, subnetMask: nil) }
         defer { freeifaddrs(ifaddr) }
         var ptr = ifaddr
         while ptr != nil {
