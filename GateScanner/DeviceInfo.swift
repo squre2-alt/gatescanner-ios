@@ -43,7 +43,7 @@ struct WiFiInfo {
     let ssid: String?
     let localIP: String?
     let subnetMask: String?
-    let gateway: String?
+    // gateway is computed from subnet
 
     var gateway: String? {
         guard let (net, _) = networkRange else { return nil }

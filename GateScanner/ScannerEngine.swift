@@ -185,7 +185,7 @@ final class ScannerEngine {
                 }
             }
         }
-        return WiFiInfo(ssid: nil, localIP: localIP, subnetMask: subnetMask, gateway: nil)
+        return WiFiInfo(ssid: nil, localIP: localIP, subnetMask: subnetMask)
     }
 }
 
