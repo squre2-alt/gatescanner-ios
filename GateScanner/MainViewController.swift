@@ -4,7 +4,6 @@ import Network
 final class MainViewController: UIViewController {
     private var results: [ScanResult] = []
     private var engine: ScannerEngine?
-    private var permBrowser: NWBrowser?  // keep strong ref
 
     private let wifiLabel = UILabel()
     private let subnetLabel = UILabel()
@@ -93,26 +92,63 @@ final class MainViewController: UIViewController {
     // MARK: - Permission
 
     private func requestPermission() {
-        // Keep a strong reference so the browser doesn't dealloc
-        permBrowser = NWBrowser(for: .bonjour(type: "_http._tcp", domain: nil), using: .tcp)
-        permBrowser?.stateUpdateHandler = { [weak self] state in
-            switch state {
-            case .ready:
-                self?.permBrowser?.cancel()
-                self?.permBrowser = nil
-                DispatchQueue.main.async { self?.refreshWiFi() }
-            case .failed, .cancelled:
-                self?.permBrowser = nil
-                DispatchQueue.main.async { self?.refreshWiFi() }
-            default: break
+        // First get WiFi info (getifaddrs works without permission)
+        let info = ScannerEngine.getWiFiInfo()
+
+        if let ip = info.localIP {
+            // Already have IP - try connecting to local gateway to trigger permission
+            wifiLabel.text = ip
+            subnetLabel.text = "正在请求本地网络权限..."
+            triggerLocalNetworkPermission(info: info)
+        } else {
+            // No WiFi detected at all
+            wifiLabel.text = "未检测到 WiFi"
+            subnetLabel.text = "请连接 WiFi 后重试\n如已连接: 设置 → 隐私 → 本地网络 → 开启道闸扫描"
+            scanBtn.isEnabled = true
+            scanBtn.alpha = 1
+        }
+    }
+
+    private func triggerLocalNetworkPermission(info: WiFiInfo) {
+        // Try connecting to common local IPs to trigger the permission prompt
+        let ips = Array(info.ipArray().prefix(10)) + ["192.168.1.1", "192.168.0.1", "10.0.0.1"]
+        var tried = 0
+        var gotResponse = false
+
+        for ip in ips.prefix(5) {
+            let conn = NWConnection(host: NWEndpoint.Host(ip), port: 80, using: .tcp)
+            conn.stateUpdateHandler = { [weak self] state in
+                switch state {
+                case .ready:
+                    conn.cancel()
+                    if !gotResponse {
+                        gotResponse = true
+                        DispatchQueue.main.async { self?.refreshWiFi() }
+                    }
+                case .failed:
+                    tried += 1
+                    if tried >= 5 && !gotResponse {
+                        gotResponse = true
+                        DispatchQueue.main.async { self?.refreshWiFi() }
+                    }
+                default: break
+                }
+            }
+            conn.start(queue: .global())
+            // Cancel after 2s
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+                conn.cancel()
+                tried += 1
+                if tried >= 5 && !gotResponse {
+                    gotResponse = true
+                    DispatchQueue.main.async { self?.refreshWiFi() }
+                }
             }
         }
-        permBrowser?.start(queue: .main)
 
-        // Fallback if browser doesn't respond
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-            if self?.wifiLabel.text == "正在获取网络权限..." {
-                self?.permBrowser = nil
+        // Fallback timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            if self?.wifiLabel.text == "正在请求本地网络权限..." || self?.subnetLabel.text == "正在请求本地网络权限..." {
                 self?.refreshWiFi()
             }
         }
