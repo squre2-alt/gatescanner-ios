@@ -4,6 +4,7 @@ import Network
 final class MainViewController: UIViewController {
     private var results: [ScanResult] = []
     private var engine: ScannerEngine?
+    private var permBrowser: NWBrowser?  // must keep strong ref
 
     private let wifiLabel = UILabel()
     private let subnetLabel = UILabel()
@@ -98,9 +99,9 @@ final class MainViewController: UIViewController {
             wifiLabel.text = ip
             subnetLabel.text = "正在请求本地网络权限..."
 
-            // Use NWListener to reliably trigger Local Network permission
-            // Listening on a local port ALWAYS triggers the prompt on iOS 14+
-            triggerWithListener(info: info)
+            // NWBrowser for Bonjour is the ONLY reliable way to trigger
+            // Local Network permission on iOS 16. Requires NSBonjourServices in Info.plist.
+            triggerWithBonjour()
         } else {
             wifiLabel.text = "未检测到 WiFi"
             subnetLabel.text = "请连接 WiFi 后重试\n如已连接: 设置 → 隐私 → 本地网络 → 开启道闸扫描"
@@ -109,45 +110,43 @@ final class MainViewController: UIViewController {
         }
     }
 
-    private func triggerWithListener(info: WiFiInfo) {
-        var triggered = false
+    private func triggerWithBonjour() {
+        // Bonjour browser for HTTP services - requires NSBonjourServices: [_http._tcp] in Info.plist
+        let browser = NWBrowser(
+            for: .bonjour(type: "_http._tcp", domain: "local"),
+            using: NWParameters()
+        )
+        permBrowser = browser
 
-        // NWListener on any port triggers local network permission
-        let listener = try? NWListener(using: .tcp, on: 0) // port 0 = random available
-        listener?.stateUpdateHandler = { [weak self] state in
+        browser.stateUpdateHandler = { [weak self] state in
             switch state {
-            case .ready, .failed, .cancelled:
-                listener?.cancel()
-                if !triggered {
-                    triggered = true
+            case .ready:
+                // Browser started successfully - permission was granted (or already granted)
+                browser.cancel()
+                self?.permBrowser = nil
+                DispatchQueue.main.async { self?.refreshWiFi() }
+            case .failed(let error):
+                browser.cancel()
+                self?.permBrowser = nil
+                // If error is permission denied, user declined or hasn't been prompted yet
+                // The prompt should appear when browser starts
+                if (error as NSError).code == 1 { // kDNSServiceErr_Unknown or permission
                     DispatchQueue.main.async { self?.refreshWiFi() }
                 }
+                DispatchQueue.main.async { self?.refreshWiFi() }
+            case .cancelled:
+                self?.permBrowser = nil
+                DispatchQueue.main.async { self?.refreshWiFi() }
             default: break
             }
         }
-        listener?.start(queue: .global())
+        browser.start(queue: .main)
 
-        // Also try connecting to gateway to be safe
-        if let gw = info.gateway {
-            let conn = NWConnection(host: NWEndpoint.Host(gw), port: 80, using: .tcp)
-            conn.stateUpdateHandler = { [weak self] state in
-                switch state {
-                case .ready:
-                    conn.cancel()
-                    if !triggered {
-                        triggered = true
-                        DispatchQueue.main.async { self?.refreshWiFi() }
-                    }
-                default: break
-                }
-            }
-            conn.start(queue: .global())
-            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { conn.cancel() }
-        }
-
-        // Fallback timeout
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+        // Fallback: if browser doesn't respond within 5s, refresh anyway
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
             if self?.subnetLabel.text == "正在请求本地网络权限..." {
+                self?.permBrowser?.cancel()
+                self?.permBrowser = nil
                 self?.refreshWiFi()
             }
         }
